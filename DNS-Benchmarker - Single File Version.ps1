@@ -23,7 +23,7 @@ $dnsFile = "dns-servers.txt"
 $testFile = "test-servers.txt"
 $dateString = Get-Date -Format "yyyy-MM-dd"
 
-# 2. Smart File Naming for Daily Results
+# 2. Smart File Naming (Prevent Overwrites)
 $baseOutputFile = Join-Path -Path $resultsFolder -ChildPath "Results-$dateString"
 $outputFile = "$baseOutputFile.csv"
 $counter = 1
@@ -32,16 +32,6 @@ while (Test-Path $outputFile) {
     $formattedCounter = "{0:D2}" -f $counter
     $outputFile = "$baseOutputFile-$formattedCounter.csv"
     $counter++
-}
-
-# 3. Setup Historical File and Determine Starting recordID
-$historicalFile = Join-Path -Path $resultsFolder -ChildPath "DNSB-Historical-Results.csv"
-$nextRecordId = 1
-if (Test-Path $historicalFile) {
-    $lastRecord = Import-Csv -Path $historicalFile | Select-Object -Last 1
-    if ($null -ne $lastRecord -and $lastRecord.recordID -match '^\d+$') {
-        $nextRecordId = [int]$lastRecord.recordID + 1
-    }
 }
 
 # Check if required text files exist
@@ -99,12 +89,11 @@ while ($frequency -lt 1 -or $frequency -gt 10) {
     }
 }
 
-# Arrays to hold the final results
+# Array to hold the final results
 $results = @()
-$historicalResults = @()
 
 Write-Host "`nStarting tests... (This may take a moment)`n" -ForegroundColor Green
-Write-Host "Note: If a DNS server IP is unreachable, Windows may pause for 10-15 seconds before timing out.`n" -ForegroundColor DarkGray
+Write-Host "Note: If a DNS server IP is unreachable, your window may pause for 10-15 seconds before timing out.`n" -ForegroundColor DarkGray
 
 # Loop through each DNS Server matched
 foreach ($server in $selectedServers) {
@@ -125,6 +114,7 @@ foreach ($server in $selectedServers) {
         for ($i = 1; $i -le $frequency; $i++) {
             Clear-DnsClientCache
             
+            # 3. Error Handling for dead/typo IPs
             try {
                 $measure = Measure-Command {
                     $null = Resolve-DnsName -Name $targetWeb -Server $dnsIp -ErrorAction Stop
@@ -135,9 +125,6 @@ foreach ($server in $selectedServers) {
                 $failedCount++
             }
         }
-        
-        # Capture exact datetime immediately after test finishes
-        $queryDateTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         
         # Calculate Average and Format Output
         if ($queryTimes.Count -gt 0) {
@@ -154,7 +141,7 @@ foreach ($server in $selectedServers) {
             }
         }
         else {
-            # All attempts failed
+            # All attempts failed (Server is likely completely dead/unreachable)
             $avgDisplay = "FAILED"
             $avgCsv = "FAILED"
             $formattedTimes = "All $frequency attempts failed"
@@ -167,7 +154,7 @@ foreach ($server in $selectedServers) {
             Write-Host " Avg: $avgDisplay" -ForegroundColor White
         }
         
-        # Daily row (unchanged schema)
+        # Create a custom object for our CSV row
         $results += [PSCustomObject]@{
             "DNS Tested"       = $dnsDesc
             "Target Website"   = $targetWeb
@@ -176,34 +163,11 @@ foreach ($server in $selectedServers) {
             "Frequency Tested" = $frequency
             "Avg Query Time"   = $avgCsv
         }
-
-        # Historical row (new schema with auto-incrementing ID and datetime)
-        $historicalResults += [PSCustomObject]@{
-            "recordID"         = $nextRecordId
-            "DNS Tested"       = $dnsDesc
-            "Target Website"   = $targetWeb
-            "Query Times (ms)" = $formattedTimes
-            "datetime"         = $queryDateTime
-            "Frequency Tested" = $frequency
-            "Avg Query Time"   = $avgCsv
-        }
-        
-        $nextRecordId++
     }
 }
 
-# Export daily results (Overwrites/Creates new daily file)
+# Export the results to a CSV file
 $results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
 
-# Export or Append historical results
-if (Test-Path $historicalFile) {
-    $historicalResults | Export-Csv -Path $historicalFile -NoTypeInformation -Encoding UTF8 -Append
-}
-else {
-    $historicalResults | Export-Csv -Path $historicalFile -NoTypeInformation -Encoding UTF8
-}
-
-Write-Host "`nTesting complete!" -ForegroundColor Green
-Write-Host "- Daily snapshot saved to: $outputFile" -ForegroundColor Green
-Write-Host "- Historical log appended to: $historicalFile" -ForegroundColor Green
+Write-Host "`nTesting complete! Results saved to $outputFile" -ForegroundColor Green
 Pause
