@@ -1,0 +1,3 @@
+@echo off
+echo Launching DNS Benchmarker...
+powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0DNS-Benchmarker.ps1"

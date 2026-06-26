@@ -1,0 +1,9 @@
+web-address,company
+www.facebook.com,Facebook
+www.google.com,Google
+www.amazon.com,Amazon
+www.nos.nl,NOS Nederland
+www.bbc.co.uk,BBC Uk
+www.github.com,Github
+www.netflix.com,Netflix
+www.hbomax.com,HBO Max
