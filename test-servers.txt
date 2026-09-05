@@ -7,3 +7,5 @@ www.bbc.co.uk,BBC Uk
 www.github.com,Github
 www.netflix.com,Netflix
 www.hbomax.com,HBO Max
+protonvpn.com, Proton
+www.ajax.nl, AFC Ajax

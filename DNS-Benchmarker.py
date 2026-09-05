@@ -9,7 +9,7 @@ try:
 except ImportError:
     print("\n[!] MISSING DEPENDENCY")
     print("Please install the 'dnspython' package to run this script.")
-    print("Run this command in your terminal: pip install dnspython\n")
+    print("Run this command in your terminal: sudo pacman -S python-dnspython\n")
     sys.exit(1)
 
 # 1. Setup working directory and results folder
@@ -93,80 +93,86 @@ while frequency < 1 or frequency > 10:
     else:
         print("Please enter a number strictly between 1 and 10.")
 
-results = []
-historical_results = []
-
-print("\nStarting tests... (This may take a moment)\n")
-
 # Configure the DNS resolver
 res = dns.resolver.Resolver(configure=False)
 res.timeout = 2.0
 res.lifetime = 2.0
 
+# Pre-build a tracking list for all the combinations we need to test
+results_tracker = []
 for server in selected_servers:
-    dns_desc = server['Description']
-    dns_ip = server['IP4 Address']
-    
-    print(f"Testing against {dns_desc} ({dns_ip})")
-    res.nameservers = [dns_ip]
-    
     for site in test_list:
-        target_web = site['web-address']
-        query_times = []
-        failed_count = 0
-        
-        print(f"  -> Querying {target_web}...", end='', flush=True)
-        
-        for _ in range(frequency):
-            try:
-                # Measure exact resolution time
-                start_time = time.perf_counter()
-                res.resolve(target_web, 'A')
-                end_time = time.perf_counter()
-                query_times.append((end_time - start_time) * 1000)
-            except Exception:
-                failed_count += 1
-                
-        query_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Calculate Average and Format Output
-        if query_times:
-            avg_time = sum(query_times) / len(query_times)
-            avg_display = f"{round(avg_time, 2)} ms"
-            avg_csv = round(avg_time, 2)
-            formatted_times = ", ".join([str(round(t, 2)) for t in query_times])
-            if failed_count > 0:
-                formatted_times += f" ({failed_count} failures)"
-        else:
-            avg_display = "FAILED"
-            avg_csv = "FAILED"
-            formatted_times = f"All {frequency} attempts failed"
-            
-        if avg_display == "FAILED":
-            print(f" {avg_display}")
-        else:
-            print(f" Avg: {avg_display}")
-            
-        results.append({
-            "DNS Tested": dns_desc,
-            "Target Website": target_web,
-            "Query Times (ms)": formatted_times,
-            "Date Tested": date_string,
-            "Frequency Tested": frequency,
-            "Avg Query Time": avg_csv
+        results_tracker.append({
+            "dns_desc": server['Description'],
+            "dns_ip": server['IP4 Address'],
+            "target_web": site['web-address'],
+            "query_times": [],
+            "failed_count": 0
         })
+
+print(f"\nStarting tests... We will sweep through the list {frequency} time(s).\n")
+
+# THE NEW LOGIC: Frequency is now the outer loop
+for current_run in range(1, frequency + 1):
+    print(f"--- Run {current_run} of {frequency} ---")
+    
+    for item in results_tracker:
+        res.nameservers = [item['dns_ip']]
+        print(f"  -> {item['dns_desc']} querying {item['target_web']}... ", end='', flush=True)
         
-        historical_results.append({
-            "recordID": next_record_id,
-            "DNS Tested": dns_desc,
-            "Target Website": target_web,
-            "Query Times (ms)": formatted_times,
-            "datetime": query_datetime,
-            "Frequency Tested": frequency,
-            "Avg Query Time": avg_csv
-        })
+        try:
+            start_time = time.perf_counter()
+            res.resolve(item['target_web'], 'A')
+            end_time = time.perf_counter()
+            elapsed_ms = (end_time - start_time) * 1000
+            item['query_times'].append(elapsed_ms)
+            print(f"{round(elapsed_ms, 2)} ms")
+        except Exception:
+            item['failed_count'] += 1
+            print("FAILED")
+            
+    print("") # Blank line between runs for readability
+
+print("Compiling final averages and saving data...")
+
+results = []
+historical_results = []
+query_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# Post-processing: Calculate averages from the tracking list and build the CSV rows
+for item in results_tracker:
+    if item['query_times']:
+        avg_time = sum(item['query_times']) / len(item['query_times'])
+        avg_display = f"{round(avg_time, 2)} ms"
+        avg_csv = round(avg_time, 2)
+        formatted_times = ", ".join([str(round(t, 2)) for t in item['query_times']])
         
-        next_record_id += 1
+        if item['failed_count'] > 0:
+            formatted_times += f" ({item['failed_count']} failures)"
+    else:
+        avg_csv = "FAILED"
+        formatted_times = f"All {frequency} attempts failed"
+        
+    results.append({
+        "DNS Tested": item['dns_desc'],
+        "Target Website": item['target_web'],
+        "Query Times (ms)": formatted_times,
+        "Date Tested": date_string,
+        "Frequency Tested": frequency,
+        "Avg Query Time": avg_csv
+    })
+    
+    historical_results.append({
+        "recordID": next_record_id,
+        "DNS Tested": item['dns_desc'],
+        "Target Website": item['target_web'],
+        "Query Times (ms)": formatted_times,
+        "datetime": query_datetime,
+        "Frequency Tested": frequency,
+        "Avg Query Time": avg_csv
+    })
+    
+    next_record_id += 1
 
 # Export daily results
 daily_fieldnames = ["DNS Tested", "Target Website", "Query Times (ms)", "Date Tested", "Frequency Tested", "Avg Query Time"]
@@ -184,6 +190,5 @@ with open(historical_file, mode='a', newline='', encoding='utf-8') as f:
         writer.writeheader()
     writer.writerows(historical_results)
 
-print("\nTesting complete!")
 print(f"- Daily snapshot saved to: {output_file}")
 print(f"- Historical log appended to: {historical_file}")
