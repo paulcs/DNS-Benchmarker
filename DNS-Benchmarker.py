@@ -3,6 +3,7 @@ import csv
 import time
 import datetime
 import sys
+import subprocess  # Added for running external terminal commands (q and dig)
 
 try:
     import dns.resolver
@@ -110,9 +111,9 @@ for server in selected_servers:
             "failed_count": 0
         })
 
-print(f"\nStarting tests... We will sweep through the list {frequency} time(s).\n")
+print(f"\nStarting benchmark tests... We will sweep through the list {frequency} time(s).\n")
 
-# THE NEW LOGIC: Frequency is now the outer loop
+# Benchmark tests execution
 for current_run in range(1, frequency + 1):
     print(f"--- Run {current_run} of {frequency} ---")
     
@@ -131,7 +132,7 @@ for current_run in range(1, frequency + 1):
             item['failed_count'] += 1
             print("FAILED")
             
-    print("") # Blank line between runs for readability
+    print("")
 
 print("Compiling final averages and saving data...")
 
@@ -139,7 +140,6 @@ results = []
 historical_results = []
 query_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Post-processing: Calculate averages from the tracking list and build the CSV rows
 for item in results_tracker:
     if item['query_times']:
         avg_time = sum(item['query_times']) / len(item['query_times'])
@@ -174,14 +174,13 @@ for item in results_tracker:
     
     next_record_id += 1
 
-# Export daily results
+# Export benchmark results
 daily_fieldnames = ["DNS Tested", "Target Website", "Query Times (ms)", "Date Tested", "Frequency Tested", "Avg Query Time"]
 with open(output_file, mode='w', newline='', encoding='utf-8') as f:
     writer = csv.DictWriter(f, fieldnames=daily_fieldnames)
     writer.writeheader()
     writer.writerows(results)
 
-# Export or Append historical results
 hist_fieldnames = ["recordID", "DNS Tested", "Target Website", "Query Times (ms)", "datetime", "Frequency Tested", "Avg Query Time"]
 write_header = not os.path.exists(historical_file)
 with open(historical_file, mode='a', newline='', encoding='utf-8') as f:
@@ -190,5 +189,88 @@ with open(historical_file, mode='a', newline='', encoding='utf-8') as f:
         writer.writeheader()
     writer.writerows(historical_results)
 
-print(f"- Daily snapshot saved to: {output_file}")
-print(f"- Historical log appended to: {historical_file}")
+print(f"- Benchmark snapshot saved to: {output_file}")
+print(f"- Benchmark historical log appended to: {historical_file}")
+
+# =====================================================================
+# NEW PHASE: DNS Secure Capabilities Checking (DoQ and DoH)
+# =====================================================================
+print("\nStarting DNS Secure Capabilities Check (DoQ and DoH)...")
+
+secure_results_file = os.path.join(results_folder, "dns-secure-capabilities.csv")
+secure_results = []
+secure_test_domain = "google.com"
+
+# Loop through all servers originally loaded from the dns-servers.txt file
+for server in dns_list:
+    server_id = server['ID']
+    dns_ip = server['IP4 Address']
+    dns_desc = server['Description']
+    
+    print(f"  -> Testing {dns_desc} ({dns_ip}) ... ", end='', flush=True)
+    
+    # 1. Test DoQ using 'q'
+    # Command syntax: q @quic://<IP> google.com --timeout 3s
+    quic_capable = "NA"
+    try:
+        # run the command, capture output, and enforce a 5s hard timeout on the python side
+        q_proc = subprocess.run(
+            ["q", f"@quic://{dns_ip}", secure_test_domain, "--timeout", "3s"],
+            capture_output=True, text=True, timeout=5
+        )
+        if q_proc.returncode == 0:
+            quic_capable = "Yes"
+        elif "timeout" in q_proc.stderr.lower() or "i/o timeout" in q_proc.stderr.lower():
+            quic_capable = "NA"
+        else:
+            quic_capable = "No"  # Actively refused or protocol error
+    except FileNotFoundError:
+        quic_capable = "Error: 'q' utility not found"
+    except subprocess.TimeoutExpired:
+        quic_capable = "NA"
+    except Exception:
+        quic_capable = "No"
+
+    # 2. Test DoH using 'dig'
+    # Command syntax: dig @<IP> +https google.com A +short +time=3 +tries=1
+    https_capable = "NA"
+    try:
+        dig_proc = subprocess.run(
+            ["dig", f"@{dns_ip}", "+https", secure_test_domain, "A", "+short", "+time=3", "+tries=1"],
+            capture_output=True, text=True, timeout=5
+        )
+        if dig_proc.returncode == 0 and dig_proc.stdout.strip() != "":
+            https_capable = "Yes"
+        elif "connection refused" in dig_proc.stderr.lower() or "connection refused" in dig_proc.stdout.lower():
+            https_capable = "No"
+        elif "timed out" in dig_proc.stdout.lower() or "timed out" in dig_proc.stderr.lower() or dig_proc.stdout.strip() == "":
+            https_capable = "NA"
+        else:
+            https_capable = "No"
+    except FileNotFoundError:
+        https_capable = "Error: 'dig' utility not found"
+    except subprocess.TimeoutExpired:
+        https_capable = "NA"
+    except Exception:
+        https_capable = "No"
+        
+    print(f"QUIC: {quic_capable} | HTTPS: {https_capable}")
+    
+    # Append the results for the current server
+    secure_results.append({
+        "ID": server_id,
+        "DNS-IP4-Address": dns_ip,
+        "QUIC-Capable": quic_capable,
+        "HTTPS-Capable": https_capable,
+        "Date-Last-Tested": query_datetime
+    })
+
+# Export Secure Capabilities Results (Overwrites file on each run)
+secure_fieldnames = ["ID", "DNS-IP4-Address", "QUIC-Capable", "HTTPS-Capable", "Date-Last-Tested"]
+with open(secure_results_file, mode='w', newline='', encoding='utf-8') as f:
+    writer = csv.DictWriter(f, fieldnames=secure_fieldnames)
+    writer.writeheader()
+    writer.writerows(secure_results)
+    
+print(f"\n- Secure capabilities log rewritten to: {secure_results_file}")
+print("All tasks complete!\n")

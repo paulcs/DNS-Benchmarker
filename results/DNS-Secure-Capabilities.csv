@@ -1,0 +1,4 @@
+ID, DNS-IP4-Address, QUIC-Capable, HTTPS-Capable, Date-Last-Tested
+1, 1,1.1.1.1, Yes,Yes,2026-09-06,10,42.24
+11, 94.140.14.14, Yes, Yes, 2026-09-06,10,42.58
+12, 94.140.15.15, Yes, Yes, 2026-09-06,10,42.58
